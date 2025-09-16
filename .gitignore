@@ -1,48 +1,62 @@
-# Binaries (ignore all, but allow specific ones in assets)
-*.exe
-*.exe~
-*.dll
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
 *.so
-*.dylib
-*.test
-*.out
 
-# Allow ffmpeg + ffprobe binaries
-!assets/ffmpeg
-!assets/ffmpeg.exe
-!assets/ffprobe
-!assets/ffprobe.exe
-
-# Go build output
-bin/
+# Distribution / packaging
+.Python
+env/
+venv/
 build/
+develop-eggs/
 dist/
-*.log
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+*.whl
 
-# Go workspace files
-go.work
-go.work.sum
+# PyInstaller
+*.spec
+dist/
+build/
 
-# Dependency directories
-vendor/
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
 
-# OS / editor junk
-.DS_Store
-Thumbs.db
-*.swp
-*.swo
-*.tmp
-*.bak
-*.old
-
-# IDE / editor
-.vscode/
+# PyCharm
 .idea/
 *.iml
+*.ipr
+*.iws
 
-# Coverage / testing
-*.cover
-*.prof
-coverage.out
+# VS Code
+.vscode/
 
+# macOS
+.DS_Store
 
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.swp
+*.swo
+
+# VSCode workspace storage
+.history/
+
+# Python virtual environment
+.venv/
