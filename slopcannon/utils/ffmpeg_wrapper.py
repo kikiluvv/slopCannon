@@ -41,6 +41,9 @@ class FFmpegWrapper:
                 "-filter_complex", filter_complex,
                 "-map", "[outv]",
                 "-map", "0:a?",
+                "-c:v", "libx264",
+                "-preset", "ultrafast",
+                "-crf", "23",
                 "-ss", str(start_sec),
                 "-t", str(duration_sec),
                 str(output_file),
@@ -51,6 +54,9 @@ class FFmpegWrapper:
                     "-vf",
                     "scale=1080:1920:force_original_aspect_ratio=decrease,"
                     "pad=1080:1920:(ow-iw)/2:(oh-ih)/2",
+                    "-c:v", "libx264",
+                    "-preset", "ultrafast",
+                    "-crf", "23",
                 ]
             else:
                 cmd += ["-c", "copy"]
@@ -85,7 +91,18 @@ class FFmpegWrapper:
             sub_cmd = [
                 self.ffmpeg, "-y",
                 "-i", str(output_file),
-                "-vf", f"subtitles='{str(srt_file)}':force_style='Fontsize=28,PrimaryColour=&H00FFFF&,OutlineColour=&H000000&,BorderStyle=1,Outline=2'",
+                "-vf", (
+                    f"subtitles='{str(srt_file)}':"
+                    "force_style='Fontname=Comic Sans MS,"
+                    "Fontsize=32,"
+                    "PrimaryColour=&H00FFFFFF,"
+                    "OutlineColour=&H00000000,"
+                    "BorderStyle=1,"
+                    "Outline=2'"
+                ),
+                "-c:v", "libx264",
+                "-preset", "ultrafast",
+                "-crf", "23",
                 "-c:a", "copy",
                 str(sub_output),
             ]
