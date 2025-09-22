@@ -16,24 +16,23 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("slopCannon")
         self.setGeometry(100, 100, 480, 800)  # portrait mode
 
-        # clip manager
         self.clip_manager = ClipManager()
-        self.loaded_video_path = None  # store loaded video
+        self.loaded_video_path = None
         self.ffmpeg = FFmpegWrapper()
 
-        # central widget & layout
+        # central widget
         central = QWidget()
         self.setCentralWidget(central)
         layout = QVBoxLayout()
         central.setLayout(layout)
 
-        # video widget & player
+        # video player
         self.video_widget = QVideoWidget()
         layout.addWidget(self.video_widget)
         self.player = QMediaPlayer()
         self.player.setVideoOutput(self.video_widget)
 
-        # slider and time label
+        # slider + label
         self.slider = QSlider(Qt.Horizontal)
         self.slider.setRange(0, 1000)
         layout.addWidget(self.slider)
@@ -63,14 +62,14 @@ class MainWindow(QMainWindow):
         self.export_btn.clicked.connect(self.export_clips)
         self.slider.sliderMoved.connect(self.scrub)
 
-        # timer for slider & time label
+        # update UI every 100ms
         self.timer = QTimer()
         self.timer.setInterval(100)
         self.timer.timeout.connect(self.update_ui)
         self.timer.start()
 
     # --------------------
-    # Video / UI Methods
+    # Video Methods
     # --------------------
     def load_video(self):
         file_path, _ = QFileDialog.getOpenFileName(
@@ -98,7 +97,7 @@ class MainWindow(QMainWindow):
             self.time_label.setText(f"{self.format_ms(pos)} / {self.format_ms(dur)}")
 
     # --------------------
-    # Clip Marking Methods
+    # Clip Methods
     # --------------------
     def mark_start(self):
         pos = self.player.position()
@@ -115,7 +114,7 @@ class MainWindow(QMainWindow):
             print(f"Error marking clip: {e}")
 
     # --------------------
-    # Export Clips Method
+    # Export
     # --------------------
     def export_clips(self):
         if not self.clip_manager.get_clips():
@@ -131,20 +130,22 @@ class MainWindow(QMainWindow):
         if not output_dir:
             return
 
-        # export each clip with overlay
         for idx, (start, end) in enumerate(self.clip_manager.get_clips(), start=1):
             out_file = Path(output_dir) / f"clip_{idx}.mp4"
             try:
-                self.ffmpeg.export_clip(
-                    self.loaded_video_path, start, end, out_file, portrait=True, overlay=True
+                final_file = self.ffmpeg.export_clip(
+                    self.loaded_video_path,
+                    start,
+                    end,
+                    out_file,
+                    portrait=True,
+                    overlay=True,
+                    subtitles=True,  # 👈 burn subs
                 )
-                print(f"Exported {out_file} with overlay")
+                print(f"✅ Exported with subs: {final_file}")
             except subprocess.CalledProcessError as e:
-                print(f"Error exporting clip {idx}: {e}")
+                print(f"❌ Error exporting clip {idx}: {e}")
 
-    # --------------------
-    # Helpers
-    # --------------------
     @staticmethod
     def format_ms(ms):
         s = ms // 1000
