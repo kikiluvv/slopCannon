@@ -41,6 +41,7 @@ class FFmpegWrapper:
         callback=None
     ):
         def worker():
+            temp_files = []
             try:
                 start_sec = start_ms / 1000
                 duration_sec = (end_ms - start_ms) / 1000
@@ -48,31 +49,35 @@ class FFmpegWrapper:
 
                 # base ffmpeg command
                 cmd = [self.ffmpeg, "-y", "-i", str(input_file)]
+                final_file = Path(output_file)
+
                 if overlay:
                     self.log_callback(f"[FFmpeg] Adding overlay: {self.overlay_video}")
                     cmd += ["-i", str(self.overlay_video)]
                     filter_complex = "[0:v]scale=1080:960,setsar=1[v0];[1:v]scale=1080:960,setsar=1[v1];[v0][v1]vstack=inputs=2[outv]"
                     cmd += ["-filter_complex", filter_complex, "-map", "[outv]", "-map", "0:a?",
                             "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
-                            "-ss", str(start_sec), "-t", str(duration_sec), str(output_file)]
+                            "-ss", str(start_sec), "-t", str(duration_sec), str(final_file)]
                 else:
                     if portrait:
                         cmd += ["-vf", "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2",
                                 "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23"]
                     else:
                         cmd += ["-c", "copy"]
-                    cmd += ["-ss", str(start_sec), "-t", str(duration_sec), str(output_file)]
+                    cmd += ["-ss", str(start_sec), "-t", str(duration_sec), str(final_file)]
 
                 self.run_cmd(cmd)
-                final_file = Path(output_file)
+                temp_files.append(final_file)
+                self.log_callback(f"[FFmpeg] Base clip generated: {final_file}")
 
                 if subtitles:
                     ass_file = final_file.with_suffix(".ass")
                     audio_file = final_file.with_suffix(".wav")
+                    temp_files.extend([ass_file, audio_file])
 
+                    self.log_callback(f"[FFmpeg] Extracting audio for transcription: {audio_file}")
                     self.run_cmd([self.ffmpeg, "-y", "-i", str(final_file), "-vn", "-ac", "1", "-ar", "16000", str(audio_file)])
 
-                    # separate model vs rendering settings
                     render_kwargs = {}
                     if subtitle_settings:
                         render_kwargs = {
@@ -80,17 +85,28 @@ class FFmpegWrapper:
                             if k in ["words_per_line","lines_per_event","fade_ms","font","font_size",
                                     "primary_color","secondary_color","outline_color","back_color"]
                         }
-                        # update model if needed
                         self.subs.update_model(model_size=subtitle_settings.model_size)
 
+                    self.log_callback(f"[FFmpeg] Generating subtitles: {ass_file}")
                     self.subs.generate_subtitles(audio_file, ass_file, **render_kwargs)
 
-                    # burn subtitles
                     sub_output = final_file.with_name(f"{final_file.stem}_sub.mp4")
+                    self.log_callback(f"[FFmpeg] Burning subtitles into final clip: {sub_output}")
                     burn_cmd = [self.ffmpeg, "-y", "-i", str(final_file), "-vf", f"subtitles='{ass_file}'",
                                 "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23", "-c:a", "copy", str(sub_output)]
                     self.run_cmd(burn_cmd)
                     final_file = sub_output
+                    temp_files.append(final_file)
+
+                # cleanup temp files (everything except the final _sub.mp4)
+                self.log_callback("[FFmpeg] Cleaning up temporary files")
+                for f in temp_files:
+                    if f.exists() and f != final_file:
+                        try:
+                            f.unlink()
+                            self.log_callback(f"[FFmpeg] Deleted temp file: {f}")
+                        except Exception as e:
+                            self.log_callback(f"[FFmpeg][WARN] Failed to delete {f}: {e}")
 
                 if callback:
                     callback(final_file)
@@ -100,4 +116,3 @@ class FFmpegWrapper:
                     callback(None, e)
 
         self.executor.submit(worker)
-

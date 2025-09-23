@@ -1,15 +1,12 @@
 # 💣 slopCannon 💣
-
 Generate slop and see what sticks to the wall.
 
 ## Features
-
 - Modular UI structure (ui/ folder)
 - Clean main entrypoint
 - Ready for expansion with more UI modules or background tasks
 
 ## Requirements
-
 - Python 3.10+ (tested with 3.11)
 - PyQt5
 - ffmpeg + headers (binary included)
@@ -51,6 +48,23 @@ source venv/bin/activate  # macOS / Linux
 
 `from .ui.main_window import MainWindow`
 
+## Usage
+
+1. **Load a video** into the app.
+2. **Configure subtitle settings**  
+   - Customize line breaks, font, size, and colors.  
+   - Choose a Whisper model (larger models are more accurate but slower).  
+   - Click `Save Settings` to apply your edits.
+3. **Trim clips** for short-form content  
+   - Use `Mark Start` to set the beginning of a clip.  
+   - Use `Mark End` to set the ending of a clip.  
+   - You can mark multiple clips before exporting, but note that processing them concurrently may slow things down.
+4. **Export clips**  
+   - Click `Export Clips` and select an output folder.  
+   - The app will trim each marked clip, apply filters, and generate subtitles.  
+   - Temporary files (intermediate MP4s, audio WAVs, and `.ass` subtitle files) are automatically cleaned up, leaving only the final exported clips.
+
+
 ## Project Structure
 ```
 slopCannon/
@@ -70,20 +84,17 @@ slopCannon/
 
 ## TODO
 ### Subtitles
-- Generate .ass files instead of .srt for advanced styling and karaoke effects
-- Support multiple subtitle formats: .srt, .ass, .vtt
-- Dynamic karaoke effects: highlight words as spoken, support bold/italic/emphasis
-- Adjustable max words per caption for smart wrapping and readability
-- Custom styling options: font, size, color, outline, shadow
+- Animated text effects
+- AI "Hook" preamble 
+    - AI voiced preamble before clip starts
 
 ### Video Processing
-- Mass-processing of clips / batch export
-- Merge multiple clips into one video with continuous subtitles
 - Custom output resolution & frame rate for portrait, TikTok, YouTube shorts
 - Overlay flexibility: dynamic selection of overlay video or image
 - Optional audio normalization for consistent volume
-- Parallel processing / multithreading to speed up batch jobs
-- GPU acceleration option for faster encoding (if available)
+- Parallel processing / multithreading to speed up batch jobs 
+- GPU acceleration option for faster encoding 
+- Manual and AI generated sound effects
 
 ### UX / Workflow
 - CLI + GUI support for clip selection, styling, and output folder
@@ -95,3 +106,5 @@ slopCannon/
 ### Advanced Features
 - Voice-based scene splitting: automatically mark new captions on speaker change or pause
 - Integration with TikTok / YouTube: auto-format clips for different platforms
+- Auto clipping for clips deemed "probable of going viral" by AI or algorithm
+    - Possibly based off of increased motion, louder volume, etc.
