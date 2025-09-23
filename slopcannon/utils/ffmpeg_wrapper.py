@@ -6,6 +6,7 @@ class FFmpegWrapper:
     def __init__(self, ffmpeg_path=None):
         self.ffmpeg = str(ffmpeg_path) if ffmpeg_path else "ffmpeg"
         self.overlay_video = Path("assets/overlays/mc.mp4")
+        # keep a generator instance (it will lazy-load model as needed)
         self.subs = SubtitleGenerator()
 
     def export_clip(
@@ -17,6 +18,7 @@ class FFmpegWrapper:
         portrait=False,
         overlay=False,
         subtitles=False,
+        subtitle_settings=None,  # expect an object with attributes (see SubtitleSettings)
     ):
         start_sec = start_ms / 1000
         duration_sec = (end_ms - start_ms) / 1000
@@ -74,8 +76,8 @@ class FFmpegWrapper:
         # STEP 2: generate + burn subtitles
         # --------------------
         if subtitles:
-            # generate srt for the segment
-            srt_file = Path(output_file).with_suffix(".srt")
+            # generate ass for the segment
+            ass_file = Path(output_file).with_suffix(".ass")
             audio_file = Path(output_file).with_suffix(".wav")
 
             # extract audio for transcription
@@ -85,21 +87,33 @@ class FFmpegWrapper:
             ]
             subprocess.run(audio_cmd, check=True)
 
-            self.subs.generate_subtitles(audio_file, srt_file)
+            # call the subtitle generator with UI settings (if provided)
+            if subtitle_settings:
+                # pass individual settings explicitly
+                self.subs.generate_subtitles(
+                    audio_file,
+                    ass_file,
+                    words_per_line=getattr(subtitle_settings, "words_per_line", 5),
+                    lines_per_event=getattr(subtitle_settings, "lines_per_event", 2),
+                    fade_ms=getattr(subtitle_settings, "fade_ms", 100),
+                    font=getattr(subtitle_settings, "font", "Comic Sans MS"),
+                    font_size=getattr(subtitle_settings, "font_size", 72),
+                    primary_color=getattr(subtitle_settings, "primary_color", "&H00FFFFFF"),
+                    secondary_color=getattr(subtitle_settings, "secondary_color", "&H00FFFFFF"),
+                    outline_color=getattr(subtitle_settings, "outline_color", "&H00000000"),
+                    back_color=getattr(subtitle_settings, "back_color", "&H64000000"),
+                    model_size=getattr(subtitle_settings, "model_size", "small")
+                )
+            else:
+                # fallback to generate_subtitles defaults
+                self.subs.generate_subtitles(audio_file, ass_file)
 
+            # burn the ASS file (ffmpeg reads styles from the ASS file itself)
             sub_output = Path(output_file).with_name(f"{Path(output_file).stem}_sub.mp4")
             sub_cmd = [
                 self.ffmpeg, "-y",
                 "-i", str(output_file),
-                "-vf", (
-                    f"subtitles='{str(srt_file)}':"
-                    "force_style='Fontname=Comic Sans MS,"
-                    "Fontsize=32,"
-                    "PrimaryColour=&H00FFFFFF,"
-                    "OutlineColour=&H00000000,"
-                    "BorderStyle=1,"
-                    "Outline=2'"
-                ),
+                "-vf", f"subtitles='{str(ass_file)}'",
                 "-c:v", "libx264",
                 "-preset", "ultrafast",
                 "-crf", "23",

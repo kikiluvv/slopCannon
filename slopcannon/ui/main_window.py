@@ -1,59 +1,94 @@
 from PyQt5.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QPushButton, QSlider, QLabel, QFileDialog
+    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QSlider, QLabel,
+    QFileDialog, QDockWidget
 )
 from PyQt5.QtCore import Qt, QTimer, QUrl
 from PyQt5.QtMultimedia import QMediaPlayer, QMediaContent
 from PyQt5.QtMultimediaWidgets import QVideoWidget
 from pathlib import Path
 import subprocess
+
 from slopcannon.managers.clip_manager import ClipManager
 from slopcannon.utils.ffmpeg_wrapper import FFmpegWrapper
+from slopcannon.utils.settings import SubtitleSettings
+from slopcannon.ui.settings_panel import SettingsPanel
 
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("slopCannon")
-        self.setGeometry(100, 100, 480, 800)  # portrait mode
+        self.setGeometry(100, 100, 800, 800)
 
+        # --------------------
+        # Managers
+        # --------------------
         self.clip_manager = ClipManager()
         self.loaded_video_path = None
         self.ffmpeg = FFmpegWrapper()
+        self.subtitle_settings = SubtitleSettings()
 
-        # central widget
+        # --------------------
+        # Central Widget
+        # --------------------
         central = QWidget()
         self.setCentralWidget(central)
-        layout = QVBoxLayout()
-        central.setLayout(layout)
+        main_layout = QVBoxLayout()
+        main_layout.setSpacing(10)
+        main_layout.setContentsMargins(10, 10, 10, 10)
+        central.setLayout(main_layout)
 
-        # video player
+        # --------------------
+        # Load Video Button
+        # --------------------
+        self.load_btn = QPushButton("Load Video")
+        main_layout.addWidget(self.load_btn)
+
+        # --------------------
+        # Video Player
+        # --------------------
         self.video_widget = QVideoWidget()
-        layout.addWidget(self.video_widget)
+        main_layout.addWidget(self.video_widget)
         self.player = QMediaPlayer()
         self.player.setVideoOutput(self.video_widget)
 
-        # slider + label
-        self.slider = QSlider(Qt.Horizontal)
-        self.slider.setRange(0, 1000)
-        layout.addWidget(self.slider)
-        self.time_label = QLabel("00:00 / 00:00")
-        layout.addWidget(self.time_label)
+        # --------------------
+        # Playback Controls Row
+        # --------------------
+        playback_layout = QHBoxLayout()
+        playback_layout.setSpacing(5)
 
-        # buttons
-        self.load_btn = QPushButton("Load Video")
         self.play_btn = QPushButton("Play")
         self.pause_btn = QPushButton("Pause")
+        self.slider = QSlider(Qt.Horizontal)
+        self.slider.setRange(0, 1000)
+        self.time_label = QLabel("00:00 / 00:00")
+
+        playback_layout.addWidget(self.play_btn)
+        playback_layout.addWidget(self.pause_btn)
+        playback_layout.addWidget(self.slider)
+        playback_layout.addWidget(self.time_label)
+        main_layout.addLayout(playback_layout)
+
+        # --------------------
+        # Clip Control Row (uniform buttons)
+        # --------------------
+        clip_layout = QHBoxLayout()
+        clip_layout.setSpacing(5)
+
         self.mark_start_btn = QPushButton("Mark Start")
         self.mark_end_btn = QPushButton("Mark End")
         self.export_btn = QPushButton("Export Clips")
 
-        for btn in [
-            self.load_btn, self.play_btn, self.pause_btn,
-            self.mark_start_btn, self.mark_end_btn, self.export_btn
-        ]:
-            layout.addWidget(btn)
+        for btn in [self.mark_start_btn, self.mark_end_btn, self.export_btn]:
+            btn.setMinimumWidth(100)
+            clip_layout.addWidget(btn)
 
-        # connect signals
+        main_layout.addLayout(clip_layout)
+
+        # --------------------
+        # Signals
+        # --------------------
         self.load_btn.clicked.connect(self.load_video)
         self.play_btn.clicked.connect(self.player.play)
         self.pause_btn.clicked.connect(self.player.pause)
@@ -62,11 +97,21 @@ class MainWindow(QMainWindow):
         self.export_btn.clicked.connect(self.export_clips)
         self.slider.sliderMoved.connect(self.scrub)
 
-        # update UI every 100ms
+        # timer to update UI
         self.timer = QTimer()
         self.timer.setInterval(100)
         self.timer.timeout.connect(self.update_ui)
         self.timer.start()
+
+        # --------------------
+        # Dockable Subtitle Settings Panel
+        # --------------------
+        self.settings_dock = QDockWidget("Subtitle Settings", self)
+        self.settings_dock.setAllowedAreas(Qt.RightDockWidgetArea | Qt.LeftDockWidgetArea)
+        self.settings_panel = SettingsPanel(self.subtitle_settings)
+        self.settings_panel.settings_changed.connect(self.apply_settings)
+        self.settings_dock.setWidget(self.settings_panel)
+        self.addDockWidget(Qt.RightDockWidgetArea, self.settings_dock)
 
     # --------------------
     # Video Methods
@@ -140,12 +185,23 @@ class MainWindow(QMainWindow):
                     out_file,
                     portrait=True,
                     overlay=True,
-                    subtitles=True,  # 👈 burn subs
+                    subtitles=True,
+                    subtitle_settings=self.subtitle_settings
                 )
                 print(f"✅ Exported with subs: {final_file}")
             except subprocess.CalledProcessError as e:
                 print(f"❌ Error exporting clip {idx}: {e}")
 
+    # --------------------
+    # Settings Handler
+    # --------------------
+    def apply_settings(self, settings: SubtitleSettings):
+        self.subtitle_settings = settings
+        print("✅ Subtitle settings updated:", vars(settings))
+
+    # --------------------
+    # Helpers
+    # --------------------
     @staticmethod
     def format_ms(ms):
         s = ms // 1000
