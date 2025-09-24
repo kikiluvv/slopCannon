@@ -29,3 +29,19 @@ class ClipManager:
 
     def get_clips(self):
         return self.clips
+    
+    def remove_clip(self, index):
+        """Remove clip at given index."""
+        if 0 <= index < len(self.clips):
+            del self.clips[index]
+
+    def update_clip(self, index, start_ms=None, end_ms=None, score=None):
+        """Edit clip parameters."""
+        if 0 <= index < len(self.clips):
+            s, e, sc = self.clips[index]
+            s = start_ms if start_ms is not None else s
+            e = end_ms if end_ms is not None else e
+            sc = score if score is not None else sc
+            if e <= s:
+                raise ValueError("End must be after start")
+            self.clips[index] = (s, e, sc)

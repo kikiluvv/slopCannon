@@ -1,6 +1,6 @@
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QSlider, QLabel,
-    QFileDialog, QDockWidget
+    QFileDialog, QDockWidget, QListWidget, QInputDialog, QMessageBox, QDialog
 )
 from PyQt5.QtCore import Qt, QTimer, QUrl
 from PyQt5.QtMultimedia import QMediaPlayer, QMediaContent
@@ -88,6 +88,9 @@ class MainWindow(QMainWindow):
         clip_layout = QHBoxLayout()
         clip_layout.setSpacing(10)
 
+        self.analyze_btn = QPushButton("Find Viral Clips")
+        self.apply_button_style(self.analyze_btn)
+        clip_layout.addWidget(self.analyze_btn)
         self.mark_start_btn = QPushButton("Mark Start")
         self.mark_end_btn = QPushButton("Mark End")
         self.export_btn = QPushButton("Export Clips")
@@ -98,10 +101,6 @@ class MainWindow(QMainWindow):
             clip_layout.addWidget(btn)
 
         main_layout.addLayout(clip_layout)
-        
-        self.analyze_btn = QPushButton("Find Viral Clips")
-        self.apply_button_style(self.analyze_btn)
-        clip_layout.addWidget(self.analyze_btn)
 
 
         # --------------------
@@ -149,6 +148,15 @@ class MainWindow(QMainWindow):
 
         self.ffmpeg = FFmpegWrapper(log_callback=self.log_panel.append)
         self.analysis_manager = AnalysisManager(log_callback=self.log_panel.append)
+        
+        # --------------------
+        # Clip Manager Button
+        # --------------------
+        self.manage_clips_btn = QPushButton("Manage Clips")
+        self.apply_button_style(self.manage_clips_btn)
+        clip_layout.addWidget(self.manage_clips_btn)
+        self.manage_clips_btn.clicked.connect(self.open_clip_manager_panel)
+        
     # --------------------
     # Video Methods
     # --------------------
@@ -185,7 +193,7 @@ class MainWindow(QMainWindow):
         suggestions = self.analysis_manager.suggest_clips(self.loaded_video_path)
 
         if not suggestions:
-            self.log_panel.append("No clips suggested.")
+            self.log_panel.append("❌ No clips suggested.")
             return
 
         # inject into ClipManager
@@ -211,17 +219,17 @@ class MainWindow(QMainWindow):
             self.log_panel.append(f"End marked at {self.format_ms(pos)}")
             self.log_panel.append(f"Current clips: {self.clip_manager.get_clips()}")
         except ValueError as e:
-            self.log_panel.append(f"Error marking clip: {e}")
+            self.log_panel.append(f"❌ Error marking clip: {e}")
 
     # --------------------
     # Export
     # --------------------
     def export_clips(self):
         if not self.clip_manager.get_clips():
-            self.log_panel.append("No clips to export!")
+            self.log_panel.append("❌ No clips to export!")
             return
         if not self.loaded_video_path:
-            self.log_panel.append("No video loaded!")
+            self.log_panel.append("❌ No video loaded!")
             return
 
         output_dir = QFileDialog.getExistingDirectory(
@@ -263,6 +271,83 @@ class MainWindow(QMainWindow):
     def apply_settings(self, settings: SubtitleSettings):
         self.subtitle_settings = settings
         self.log_panel.append(f"✅ Subtitle settings updated: {vars(settings)}")
+    
+    # --------------------
+    # Clip Manager Panel
+    # --------------------
+    def open_clip_manager_panel(self):
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Clip Manager")
+        dlg.setMinimumWidth(450)  # wider for long text
+        dlg.setModal(True)
+
+        layout = QVBoxLayout()
+        dlg.setLayout(layout)
+
+        # clip list
+        self.clip_list_widget = QListWidget()
+        self.clip_list_widget.setSelectionMode(QListWidget.SingleSelection)
+        for idx, (s, e, score) in enumerate(self.clip_manager.get_clips()):
+            self.clip_list_widget.addItem(f"[{idx}] {self.format_ms(s)} → {self.format_ms(e)} | Score: {score:.2f}")
+        layout.addWidget(self.clip_list_widget)
+
+        # buttons row
+        btn_layout = QHBoxLayout()
+        edit_btn = QPushButton("Edit Clip")
+        delete_btn = QPushButton("Delete Clip")
+        close_btn = QPushButton("Close")
+
+        for btn in [edit_btn, delete_btn, close_btn]:
+            self.apply_button_style(btn)
+            btn_layout.addWidget(btn)
+
+        layout.addLayout(btn_layout)
+
+        # signals
+        edit_btn.clicked.connect(lambda: self.edit_clip_in_dialog())
+        delete_btn.clicked.connect(lambda: self.delete_clip_in_dialog())
+        close_btn.clicked.connect(dlg.accept)
+
+        dlg.exec_()
+        
+        # --- log updated clips ---
+        self.log_panel.append(f"Updated clips: {self.clip_manager.get_clips()}")
+
+    # --------------------
+    # Dialog Helpers
+    # --------------------
+    def delete_clip_in_dialog(self):
+        idx = self.clip_list_widget.currentRow()
+        if idx < 0:
+            return
+        confirm = QMessageBox.question(
+            self, "Delete Clip", "Are you sure you want to delete this clip?",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if confirm == QMessageBox.Yes:
+            self.clip_manager.remove_clip(idx)
+            self.clip_list_widget.takeItem(idx)
+
+    def edit_clip_in_dialog(self):
+        idx = self.clip_list_widget.currentRow()
+        if idx < 0:
+            return
+        s, e, score = self.clip_manager.get_clips()[idx]
+
+        new_start, ok = QInputDialog.getInt(self, "Edit Start", "Start ms:", s)
+        if not ok: return
+        new_end, ok = QInputDialog.getInt(self, "Edit End", "End ms:", e)
+        if not ok: return
+        new_score, ok = QInputDialog.getDouble(self, "Edit Score", "Score:", score, 0, 10, 2)
+        if not ok: return
+
+        try:
+            self.clip_manager.update_clip(idx, new_start, new_end, new_score)
+            self.clip_list_widget.item(idx).setText(
+                f"[{idx}] {self.format_ms(new_start)} → {self.format_ms(new_end)} | Score: {new_score:.2f}"
+            )
+        except ValueError as ve:
+            QMessageBox.warning(self, "❌ Invalid Clip", str(ve))
 
     # --------------------
     # Helpers
