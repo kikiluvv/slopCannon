@@ -2,7 +2,7 @@ from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QSlider, QLabel,
     QFileDialog, QDockWidget, QListWidget, QInputDialog, QMessageBox, QDialog
 )
-from PyQt5.QtCore import Qt, QTimer, QUrl
+from PyQt5.QtCore import Qt, QTimer, QUrl, QThread
 from PyQt5.QtMultimedia import QMediaPlayer, QMediaContent
 from PyQt5.QtMultimediaWidgets import QVideoWidget
 from pathlib import Path
@@ -16,6 +16,7 @@ from slopcannon.ui.settings_panel import SettingsPanel
 from slopcannon.ui.log_panel import LogPanel
 from slopcannon.utils.log_stream import EmittingStream
 from slopcannon.managers.analysis_manager import AnalysisManager
+from slopcannon.workers.analysis_worker import AnalysisWorker
 
 
 class MainWindow(QMainWindow):
@@ -190,18 +191,34 @@ class MainWindow(QMainWindow):
             return
 
         self.log_panel.append("🔍 Running viral clip analysis...")
-        suggestions = self.analysis_manager.suggest_clips(self.loaded_video_path)
 
+        # --- setup worker thread ---
+        self.analysis_thread = QThread()
+        self.analysis_worker = AnalysisWorker(self.analysis_manager, self.loaded_video_path)
+        self.analysis_worker.moveToThread(self.analysis_thread)
+
+        # connect signals
+        self.analysis_worker.progress.connect(lambda msg: self.log_panel.append(msg))
+        self.analysis_worker.finished.connect(self.on_analysis_finished)
+        self.analysis_worker.finished.connect(self.analysis_thread.quit)
+        self.analysis_worker.finished.connect(self.analysis_worker.deleteLater)
+        self.analysis_thread.finished.connect(self.analysis_thread.deleteLater)
+
+        # start worker
+        self.analysis_thread.started.connect(self.analysis_worker.run)
+        self.analysis_thread.start()
+
+    def on_analysis_finished(self, suggestions):
         if not suggestions:
             self.log_panel.append("❌ No clips suggested.")
             return
 
-        # inject into ClipManager
         for (start, end, score) in suggestions:
             self.clip_manager.add_clip(start, end, score)
 
         self.log_panel.append(f"✅ Added {len(suggestions)} suggested clips")
         self.log_panel.append(f"Current clips: {self.clip_manager.get_clips()}")
+
 
 
     # --------------------
