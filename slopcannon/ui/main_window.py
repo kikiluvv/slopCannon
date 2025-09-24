@@ -15,6 +15,8 @@ from slopcannon.utils.settings import SubtitleSettings
 from slopcannon.ui.settings_panel import SettingsPanel
 from slopcannon.ui.log_panel import LogPanel
 from slopcannon.utils.log_stream import EmittingStream
+from slopcannon.managers.analysis_manager import AnalysisManager
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -96,6 +98,11 @@ class MainWindow(QMainWindow):
             clip_layout.addWidget(btn)
 
         main_layout.addLayout(clip_layout)
+        
+        self.analyze_btn = QPushButton("Find Viral Clips")
+        self.apply_button_style(self.analyze_btn)
+        clip_layout.addWidget(self.analyze_btn)
+
 
         # --------------------
         # Signals
@@ -107,6 +114,7 @@ class MainWindow(QMainWindow):
         self.mark_end_btn.clicked.connect(self.mark_end)
         self.export_btn.clicked.connect(self.export_clips)
         self.slider.sliderMoved.connect(self.scrub)
+        self.analyze_btn.clicked.connect(self.analyze_video)
 
         # --------------------
         # Timer to update UI
@@ -140,6 +148,7 @@ class MainWindow(QMainWindow):
         sys.stderr = EmittingStream(self.log_panel.append)
 
         self.ffmpeg = FFmpegWrapper(log_callback=self.log_panel.append)
+        self.analysis_manager = AnalysisManager(log_callback=self.log_panel.append)
     # --------------------
     # Video Methods
     # --------------------
@@ -166,6 +175,26 @@ class MainWindow(QMainWindow):
             self.slider.setValue(int(pos / dur * 1000))
             self.slider.blockSignals(False)
             self.time_label.setText(f"{self.format_ms(pos)} / {self.format_ms(dur)}")
+            
+    def analyze_video(self):
+        if not self.loaded_video_path:
+            self.log_panel.append("❌ No video loaded for analysis")
+            return
+
+        self.log_panel.append("🔍 Running viral clip analysis...")
+        suggestions = self.analysis_manager.suggest_clips(self.loaded_video_path)
+
+        if not suggestions:
+            self.log_panel.append("No clips suggested.")
+            return
+
+        # inject into ClipManager
+        for (start, end, score) in suggestions:
+            self.clip_manager.add_clip(start, end, score)
+
+        self.log_panel.append(f"✅ Added {len(suggestions)} suggested clips")
+        self.log_panel.append(f"Current clips: {self.clip_manager.get_clips()}")
+
 
     # --------------------
     # Clip Methods
@@ -213,9 +242,9 @@ class MainWindow(QMainWindow):
                 self.log_panel.append(f"✅ Clip export finished: {final_file}")
 
         # submit all clips to FFmpegWrapper
-        for idx, (start, end) in enumerate(clips, start=1):
+        for idx, (start, end, score) in enumerate(clips, start=1):
             out_file = Path(output_dir) / f"clip_{idx}.mp4"
-            self.log_panel.append(f"[{idx}/{len(clips)}] Exporting clip {idx}...")
+            self.log_panel.append(f"[{idx}/{len(clips)}] Exporting clip {idx} (score={score:.2f})...")
             self.ffmpeg.export_clip(
                 input_file=self.loaded_video_path,
                 start_ms=start,

@@ -50,10 +50,10 @@ class FFmpegWrapper:
                 # base ffmpeg command
                 cmd = [self.ffmpeg, "-y", "-i", str(input_file)]
                 final_file = Path(output_file)
-
+                
                 if overlay:
                     self.log_callback(f"[FFmpeg] Adding overlay: {self.overlay_video}")
-                    cmd += ["-i", str(self.overlay_video)]
+                    cmd += ["-stream_loop", "-1", "-i", str(self.overlay_video)]
                     filter_complex = "[0:v]scale=1080:960,setsar=1[v0];[1:v]scale=1080:960,setsar=1[v1];[v0][v1]vstack=inputs=2[outv]"
                     cmd += ["-filter_complex", filter_complex, "-map", "[outv]", "-map", "0:a?",
                             "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
