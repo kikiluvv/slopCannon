@@ -1,16 +1,11 @@
 # 💣 slopCannon 💣
 Generate slop and see what sticks to the wall.
 
-## Features
-- Modular UI structure (ui/ folder)
-- Clean main entrypoint
-- Ready for expansion with more UI modules or background tasks
-
 ## Requirements
 - Python 3.10+ (tested with 3.11)
-- PyQt5
-- ffmpeg + headers (binary included)
-- ffprobe (binary included)
+- ffmpeg + headers 
+- ffprobe 
+- OpenCV + headers
 - virtualenv (highly recommended)
 
 ## Installation
@@ -55,10 +50,12 @@ source venv/bin/activate  # macOS / Linux
    - Customize line breaks, font, size, and colors.  
    - Choose a Whisper model (larger models are more accurate but slower).  
    - Click `Save Settings` to apply your edits.
-3. **Trim clips** for short-form content  
+3. **Trim clips** for short-form content 
+   - ***Optional*** - Use the `Find Viral Clips` button to algorithmically trim out clips based on a "virality score" from the clip analyzer. 
    - Use `Mark Start` to set the beginning of a clip.  
    - Use `Mark End` to set the ending of a clip.  
    - You can mark multiple clips before exporting, but note that processing them concurrently may slow things down.
+   - Use the `Manage Clips` button to edit or delete existing clips
 4. **Export clips**  
    - Click `Export Clips` and select an output folder.  
    - The app will trim each marked clip, apply filters, and generate subtitles.  
@@ -95,16 +92,15 @@ slopCannon/
 - Parallel processing / multithreading to speed up batch jobs 
 - GPU acceleration option for faster encoding 
 - Manual and AI generated sound effects
+- More AI slop
 
 ### UX / Workflow
 - CLI + GUI support for clip selection, styling, and output folder
 - Realtime transcription / preview of subtitles while clip plays
 - Progress reporting: percentage, ETA for long clips
 - Error handling & logging: skip bad files and log failures
-- Auto-clean temporary files (e.g., .wav, intermediate clips)
 
 ### Advanced Features
-- Voice-based scene splitting: automatically mark new captions on speaker change or pause
 - Integration with TikTok / YouTube: auto-format clips for different platforms
 - Auto clipping for clips deemed "probable of going viral" by AI or algorithm
-    - Possibly based off of increased motion, louder volume, etc.
+- AI virality scoring 
