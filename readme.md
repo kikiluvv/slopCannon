@@ -78,6 +78,25 @@ slopCannon/
 1. Always run from the project root (`slopCannon/`)
 2. Add new UI modules inside slopcannon/ui/
 3. Keep your imports consistent: relative inside package, absolute outside
+4. See [PERFORMANCE.md](PERFORMANCE.md) for performance tuning and optimization tips
+
+## Performance & Optimization
+
+slopCannon now supports multi-threaded processing and configurable performance settings. Key features:
+
+- **Parallel Clip Export**: Export multiple clips simultaneously (default: up to 4 parallel exports)
+- **Parallel Video Analysis**: Scene and motion analysis run in parallel for 2x speedup
+- **Smart Frame Skipping**: Optimized frame sampling for 10-30x faster analysis
+- **Configurable Settings**: Environment variables for fine-tuning performance
+
+**Quick Start - Performance Mode:**
+```bash
+export SLOP_MAX_EXPORT_WORKERS=4
+export SLOP_FRAME_SKIP=15
+python3 -m slopcannon.main
+```
+
+For detailed configuration options and benchmarks, see [PERFORMANCE.md](PERFORMANCE.md).
 
 ## TODO
 ### Subtitles
