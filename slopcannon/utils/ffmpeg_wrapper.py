@@ -1,6 +1,7 @@
 import subprocess
 from pathlib import Path
 from .subtitle_generator import SubtitleGenerator
+from .error_handling import with_retry, RetryConfig, ErrorRecovery
 from concurrent.futures import ThreadPoolExecutor
 import os
 
@@ -12,27 +13,63 @@ class FFmpegWrapper:
         self.subs = SubtitleGenerator(log_callback=log_callback)
         self.preset = preset
         self.crf = crf
+        self.retry_config = RetryConfig(max_attempts=2, initial_delay=2.0)
         # Default to CPU count for parallel processing, with a reasonable max
         if max_workers is None:
             max_workers = min(os.cpu_count() or 1, 4)
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
         self.log_callback(f"[FFmpegWrapper] Initialized with {max_workers} worker(s), preset={preset}, crf={crf}")
 
-    def run_cmd(self, cmd):
+    def run_cmd(self, cmd, allow_retry=True):
         self.log_callback(f"[FFmpeg] Running command: {' '.join(cmd)}")
-        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        stdout, stderr = process.communicate()
+        
+        attempt = 0
+        max_attempts = self.retry_config.max_attempts if allow_retry else 1
+        last_error = None
+        
+        while attempt < max_attempts:
+            try:
+                process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                stdout, stderr = process.communicate()
 
-        if process.returncode != 0:
-            self.log_callback(f"[FFmpeg][ERROR] Command failed with code {process.returncode}")
-            if stdout:
-                self.log_callback(f"[FFmpeg][stdout]\n{stdout.strip()}")
-            if stderr:
-                self.log_callback(f"[FFmpeg][stderr]\n{stderr.strip()}")
-            raise subprocess.CalledProcessError(process.returncode, cmd)
+                if process.returncode != 0:
+                    self.log_callback(f"[FFmpeg][ERROR] Command failed with code {process.returncode}")
+                    if stdout:
+                        self.log_callback(f"[FFmpeg][stdout]\n{stdout.strip()}")
+                    if stderr:
+                        self.log_callback(f"[FFmpeg][stderr]\n{stderr.strip()}")
+                    
+                    # Try error recovery
+                    if allow_retry and attempt < max_attempts - 1:
+                        recovered_cmd = ErrorRecovery.recover_from_ffmpeg_error(
+                            subprocess.CalledProcessError(process.returncode, cmd, stderr=stderr),
+                            cmd.copy(),
+                            self.log_callback
+                        )
+                        
+                        if recovered_cmd:
+                            cmd = recovered_cmd
+                            attempt += 1
+                            self.log_callback(f"[FFmpeg] Retrying with modified command (attempt {attempt + 1}/{max_attempts})")
+                            continue
+                    
+                    raise subprocess.CalledProcessError(process.returncode, cmd, stderr=stderr)
 
-        self.log_callback(f"[FFmpeg] Command finished successfully with code {process.returncode}")
-        return process.returncode
+                self.log_callback(f"[FFmpeg] Command finished successfully with code {process.returncode}")
+                return process.returncode
+                
+            except subprocess.CalledProcessError as e:
+                last_error = e
+                attempt += 1
+                
+                if attempt < max_attempts:
+                    delay = self.retry_config.get_delay(attempt - 1)
+                    self.log_callback(f"[FFmpeg] Attempt {attempt}/{max_attempts} failed. Retrying in {delay:.1f}s...")
+                    import time
+                    time.sleep(delay)
+        
+        # All retries exhausted
+        raise last_error
 
     def export_clip(
         self,
