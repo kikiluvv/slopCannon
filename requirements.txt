@@ -9,8 +9,10 @@ fsspec==2025.9.0
 hf-xet==1.1.10
 huggingface-hub==0.35.0
 idna==3.10
+librosa==0.10.1
 macholib==1.16.3
 numpy==2.3.3
+opencv-python==4.8.1.78
 packaging==25.0
 pyinstaller==6.16.0
 pyinstaller-hooks-contrib==2025.8

@@ -12,6 +12,7 @@ import sys
 from slopcannon.managers.clip_manager import ClipManager
 from slopcannon.utils.ffmpeg_wrapper import FFmpegWrapper
 from slopcannon.utils.settings import SubtitleSettings
+from slopcannon.utils.performance_config import PerformanceConfig
 from slopcannon.ui.settings_panel import SettingsPanel
 from slopcannon.ui.log_panel import LogPanel
 from slopcannon.utils.log_stream import EmittingStream
@@ -31,6 +32,8 @@ class MainWindow(QMainWindow):
         self.clip_manager = ClipManager()
         self.loaded_video_path = None
         self.subtitle_settings = SubtitleSettings()
+        self.perf_config = PerformanceConfig.from_env()
+        self.log_panel = LogPanel()  # Initialize early for logging
 
         # --------------------
         # Central Widget
@@ -139,7 +142,6 @@ class MainWindow(QMainWindow):
         # --------------------
         self.log_dock = QDockWidget("Processing Log", self)
         self.log_dock.setAllowedAreas(Qt.BottomDockWidgetArea | Qt.TopDockWidgetArea)
-        self.log_panel = LogPanel()
         self.log_dock.setWidget(self.log_panel)
         self.addDockWidget(Qt.BottomDockWidgetArea, self.log_dock)
 
@@ -147,8 +149,16 @@ class MainWindow(QMainWindow):
         sys.stdout = EmittingStream(self.log_panel.append)
         sys.stderr = EmittingStream(self.log_panel.append)
 
-        self.ffmpeg = FFmpegWrapper(log_callback=self.log_panel.append)
-        self.analysis_manager = AnalysisManager(log_callback=self.log_panel.append)
+        # Log performance configuration
+        self.log_panel.append(f"⚙️ Performance Config: {self.perf_config.max_export_workers} export workers, {self.perf_config.max_analysis_workers} analysis workers")
+
+        self.ffmpeg = FFmpegWrapper(
+            log_callback=self.log_panel.append, 
+            max_workers=self.perf_config.get_export_workers(),
+            preset=self.perf_config.ffmpeg_preset,
+            crf=self.perf_config.ffmpeg_crf
+        )
+        self.analysis_manager = AnalysisManager(log_callback=self.log_panel.append, max_workers=self.perf_config.get_analysis_workers())
         
         # --------------------
         # Clip Manager Button

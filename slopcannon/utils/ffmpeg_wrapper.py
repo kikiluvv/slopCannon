@@ -2,15 +2,21 @@ import subprocess
 from pathlib import Path
 from .subtitle_generator import SubtitleGenerator
 from concurrent.futures import ThreadPoolExecutor
+import os
 
 class FFmpegWrapper:
-    def __init__(self, ffmpeg_path=None, log_callback=print):
+    def __init__(self, ffmpeg_path=None, log_callback=print, max_workers=None, preset="ultrafast", crf=23):
         self.ffmpeg = str(ffmpeg_path) if ffmpeg_path else "ffmpeg"
         self.overlay_video = Path("assets/overlays/mc.mp4")
         self.log_callback = log_callback
         self.subs = SubtitleGenerator(log_callback=log_callback)
-        self.executor = ThreadPoolExecutor(max_workers=1)
-        self.log_callback("[FFmpegWrapper] Initialized")
+        self.preset = preset
+        self.crf = crf
+        # Default to CPU count for parallel processing, with a reasonable max
+        if max_workers is None:
+            max_workers = min(os.cpu_count() or 1, 4)
+        self.executor = ThreadPoolExecutor(max_workers=max_workers)
+        self.log_callback(f"[FFmpegWrapper] Initialized with {max_workers} worker(s), preset={preset}, crf={crf}")
 
     def run_cmd(self, cmd):
         self.log_callback(f"[FFmpeg] Running command: {' '.join(cmd)}")
@@ -56,12 +62,12 @@ class FFmpegWrapper:
                     cmd += ["-stream_loop", "-1", "-i", str(self.overlay_video)]
                     filter_complex = "[0:v]scale=1080:960,setsar=1[v0];[1:v]scale=1080:960,setsar=1[v1];[v0][v1]vstack=inputs=2[outv]"
                     cmd += ["-filter_complex", filter_complex, "-map", "[outv]", "-map", "0:a?",
-                            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
+                            "-c:v", "libx264", "-preset", self.preset, "-crf", str(self.crf),
                             "-ss", str(start_sec), "-t", str(duration_sec), str(final_file)]
                 else:
                     if portrait:
                         cmd += ["-vf", "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2",
-                                "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23"]
+                                "-c:v", "libx264", "-preset", self.preset, "-crf", str(self.crf)]
                     else:
                         cmd += ["-c", "copy"]
                     cmd += ["-ss", str(start_sec), "-t", str(duration_sec), str(final_file)]
@@ -93,7 +99,7 @@ class FFmpegWrapper:
                     sub_output = final_file.with_name(f"{final_file.stem}_sub.mp4")
                     self.log_callback(f"[FFmpeg] Burning subtitles into final clip: {sub_output}")
                     burn_cmd = [self.ffmpeg, "-y", "-i", str(final_file), "-vf", f"subtitles='{ass_file}'",
-                                "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23", "-c:a", "copy", str(sub_output)]
+                                "-c:v", "libx264", "-preset", self.preset, "-crf", str(self.crf), "-c:a", "copy", str(sub_output)]
                     self.run_cmd(burn_cmd)
                     final_file = sub_output
                     temp_files.append(final_file)

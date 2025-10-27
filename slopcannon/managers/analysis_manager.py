@@ -6,20 +6,23 @@ import numpy as np
 import librosa
 import cv2
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 class AnalysisManager:
     """
     Scans a video file and suggests clip ranges with heuristic 'viral potential' scores.
-    Combines audio and visual heuristics (scene changes + motion).
+    Combines audio and visual heuristics (scene changes + motion) with parallel processing.
     """
 
-    def __init__(self, log_callback=print):
+    def __init__(self, log_callback=print, max_workers=2):
         self.log = log_callback
+        self.max_workers = max_workers
+        self.log(f"[AnalysisManager] Initialized with {max_workers} worker(s)")
 
     # --------------------
     # Visual Heuristics
     # --------------------
-    def _calc_scene_change_scores(self, video_path, window_sec, stride_sec):
+    def _calc_scene_change_scores(self, video_path, window_sec, stride_sec, frame_skip=None):
         self.log("[Visual] Calculating scene change scores...")
         cap = cv2.VideoCapture(str(video_path))
         fps = cap.get(cv2.CAP_PROP_FPS)
@@ -27,6 +30,12 @@ class AnalysisManager:
         duration = frame_count / fps
         num_windows = max(1, int(duration / stride_sec))
         scores = np.zeros(num_windows)
+
+        # Auto-calculate frame skip if not provided (sample ~2 fps)
+        if frame_skip is None:
+            frame_skip = max(1, int(fps // 2))
+        
+        self.log(f"[Visual][Scene] Processing with frame skip: {frame_skip} (effective fps: {fps/frame_skip:.2f})")
 
         prev_hist = None
         frame_idx = 0
@@ -36,6 +45,12 @@ class AnalysisManager:
             ret, frame = cap.read()
             if not ret:
                 break
+            
+            # Skip frames for performance
+            if frame_idx % frame_skip != 0:
+                frame_idx += 1
+                continue
+            
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             hist = cv2.calcHist([gray], [0], None, [256], [0,256])
             hist = cv2.normalize(hist, hist).flatten()
@@ -56,7 +71,7 @@ class AnalysisManager:
         scores = (scores - np.min(scores)) / (np.ptp(scores)+1e-6)
         return scores
 
-    def _calc_motion_scores(self, video_path, window_sec, stride_sec):
+    def _calc_motion_scores(self, video_path, window_sec, stride_sec, frame_skip=None):
         self.log("[Visual] Calculating motion scores (ultra-fast mode)...")
         cap = cv2.VideoCapture(str(video_path))
         ret, prev_frame = cap.read()
@@ -72,9 +87,14 @@ class AnalysisManager:
         num_windows = max(1, int(duration / stride_sec))
         scores = np.zeros(num_windows)
 
+        # Auto-calculate frame skip if not provided (sample ~2 fps)
+        if frame_skip is None:
+            frame_skip = max(1, int(fps // 2))
+        
+        self.log(f"[Visual][Motion] Processing with frame skip: {frame_skip} (effective fps: {fps/frame_skip:.2f})")
+
         frame_idx = 1
         log_interval = max(1, frame_count // 50)
-        frame_skip = max(1, int(fps // 2))  # ~2 frames per second
 
         while True:
             ret, frame = cap.read()
@@ -105,7 +125,7 @@ class AnalysisManager:
     # --------------------
     # Main Suggest Clips
     # --------------------
-    def suggest_clips(self, input_file, window_sec=20, stride_sec=5, sr=16000, max_clips=5, allowed_overlap_sec=2):
+    def suggest_clips(self, input_file, window_sec=20, stride_sec=5, sr=16000, max_clips=5, allowed_overlap_sec=2, frame_skip=None):
         self.log(f"[Analysis] Starting analysis of {input_file}")
 
         # --- extract audio ---
@@ -122,6 +142,7 @@ class AnalysisManager:
         hop_length = int(0.25 * sr)
 
         # --- audio features ---
+        self.log("[Analysis] Computing audio features...")
         rms = librosa.feature.rms(y=y, frame_length=frame_length, hop_length=hop_length)[0]
         zcr = librosa.feature.zero_crossing_rate(y, frame_length=frame_length, hop_length=hop_length)[0]
         spec_cent = librosa.feature.spectral_centroid(y=y, sr=sr, n_fft=frame_length, hop_length=hop_length)[0]
@@ -144,11 +165,21 @@ class AnalysisManager:
 
         duration = librosa.get_duration(y=y, sr=sr)
 
-        # --- visual heuristics ---
-        scene_scores = self._calc_scene_change_scores(input_file, window_sec, stride_sec)
-        motion_scores = self._calc_motion_scores(input_file, window_sec, stride_sec)
+        # --- visual heuristics (parallel) ---
+        self.log("[Analysis] Computing visual features in parallel...")
+        scene_scores = None
+        motion_scores = None
+        
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            future_scene = executor.submit(self._calc_scene_change_scores, input_file, window_sec, stride_sec, frame_skip)
+            future_motion = executor.submit(self._calc_motion_scores, input_file, window_sec, stride_sec, frame_skip)
+            
+            # Wait for both to complete
+            scene_scores = future_scene.result()
+            motion_scores = future_motion.result()
 
         # --- windowing + combined score ---
+        self.log("[Analysis] Computing combined scores for windows...")
         windows = []
         for w_idx, start in enumerate(np.arange(0, duration - window_sec, stride_sec)):
             end = start + window_sec
