@@ -1,62 +1,43 @@
-# Byte-compiled / optimized / DLL files
-__pycache__/
-*.py[cod]
-*$py.class
-
-# C extensions
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
 *.so
+*.dylib
 
-# Distribution / packaging
-.Python
-env/
-venv/
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-*.egg-info/
-.installed.cfg
-*.egg
-*.whl
+# Test binary, built with `go test -c`
+*.test
+testdata/
+test_output.log
 
-# PyInstaller
-*.spec
-dist/
-build/
+# Output of the go coverage tool
+*.out
 
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
+# Go workspace file
+go.work
 
-# PyCharm
+# Dependency directories
+vendor/
+
+# Go build cache
+.cache/
+
+# IDEs and editors
 .idea/
-*.iml
-*.ipr
-*.iws
-
-# VS Code
 .vscode/
-
-# macOS
-.DS_Store
-
-# Logs
-*.log
-
-# Temporary files
-*.tmp
 *.swp
 *.swo
+*~
 
-# VSCode workspace storage
-.history/
+# OS files
+.DS_Store
+Thumbs.db
 
-# Python virtual environment
-.venv/
+# Environment variables
+.env
+.env.local
+
+# Build output
+bin/
+dist/
+build/
