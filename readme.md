@@ -1,125 +1,124 @@
-# 💣 slopCannon 💣
-Generate slop and see what sticks to the wall.
+<!--
+COPILOT_INSTRUCTIONS:
+- You are assisting with building the project “slopCannon” in Go.
+- Follow the structure in /docs.
+- NEVER create files at the project root unless explicitly told.
+- All new files must live inside the correct existing folders.
+- Always propose diffs or file additions rather than overwriting entire folders.
+- Respect modular architecture and keep dependencies minimal.
+- All code must be idiomatic Go and follow Go module best practices.
+-->
 
-## Requirements
-- Python 3.10+ (tested with 3.11)
-- ffmpeg + headers 
-- ffprobe 
-- OpenCV + headers
-- virtualenv (highly recommended)
 
-## Installation
-1. clone repo
+
+# slopCannon 
+slopCannon is a modular Go-powered viral-clip generation toolkit.  
+It blends AI heuristics, subtitle generation, ffmpeg editing, overlays, and a small UI layer on top of a CLI-first engine.
+
+## 🌑 what this thing *is*
+slopCannon takes a longform video  
+→ slices it into moments worth caring about  
+→ ranks them with AI + heuristic gut-feel  
+→ lets you trim/edit/fuck with them  
+→ overlays parkour or csgo surfing because the internet is dead inside  
+→ spits out a fully-edited export with subtitles, stickers, SFX, whatever you want.
+
+all modular. all configurable. all CLI-first.  
+UI sits like a thin ghost on top.
+
+---
+
+# 🧩 core goals
+- modular plugin architecture (ai, heuristics, overlays, subtitle engines, etc)
+- lightning-fast parallel processing (goroutines, worker pools, optimized ffmpeg integration)
+- cli-driven workflow with optional UI wrapper
+- fully configurable through settings (yaml/toml/env/flags)
+- buildable to a single go binary
+- ai model for “viral potential” scoring
+- whisper-based `.ass` subtitle generation + style options
+- manual clip editing: trimming, reordering, deleting, timestamp fixing
+- stickers / overlays / sfx timeline support
+- proper error handling across pipeline
+- comprehensive structured logging
+- logs piped to UI + CLI stream when needed
+
+---
+
+# 🎞️ pipeline overview
+
 ```
-git clone https://github.com/kikiluvv/slopCannon
-cd slopCannon
-```
-2. create venv
-```
-python3 -m venv venv
-source venv/bin/activate  # macOS / Linux
-
-# OR
-
-.\venv\Scripts\activate  # Windows
-```
-
-3. install dependencies
-
-`pip install -r requirements.txt`
-
-
-## Running the App
-1. **Recommended**: module way
-
-`python3 -m slopcannon.main`
-
-2. Direct file (less clean)
-
-`python3 slopcannon/main.py`
-
-
-*make sure to fix imports in main.py to relative imports if you go this route:*
-
-`from .ui.main_window import MainWindow`
-
-## Usage
-
-1. **Load a video** into the app.
-2. **Configure subtitle settings**  
-   - Customize line breaks, font, size, and colors.  
-   - Choose a Whisper model (larger models are more accurate but slower).  
-   - Click `Save Settings` to apply your edits.
-3. **Trim clips** for short-form content 
-   - ***Optional*** - Use the `Find Viral Clips` button to algorithmically trim out clips based on a "virality score" from the clip analyzer. 
-   - Use `Mark Start` to set the beginning of a clip.  
-   - Use `Mark End` to set the ending of a clip.  
-   - You can mark multiple clips before exporting, but note that processing them concurrently may slow things down.
-   - Use the `Manage Clips` button to edit or delete existing clips
-4. **Export clips**  
-   - Click `Export Clips` and select an output folder.  
-   - The app will trim each marked clip, apply filters, and generate subtitles.  
-   - Temporary files (intermediate MP4s, audio WAVs, and `.ass` subtitle files) are automatically cleaned up, leaving only the final exported clips.
-
-
-## Project Structure
-```
-slopCannon/
-├─ venv/                 # virtualenv
-├─ slopcannon/
-│  ├─ __init__.py
-│  ├─ main.py            # main entrypoint
-│  └─ ui/
-│     └─ main_window.py  # main window GUI
+input video  
+→ analyze (ai + heuristics)  
+→ detect clips  
+→ rank  
+→ edit (manual or auto)  
+→ subtitle (whisper → .ass)  
+→ overlay/stickers/sfx merge  
+→ ffmpeg render  
+→ export  
 ```
 
-## Notes
+each step is a module under `internal/`.
 
-1. Always run from the project root (`slopCannon/`)
-2. Add new UI modules inside slopcannon/ui/
-3. Keep your imports consistent: relative inside package, absolute outside
-4. See [PERFORMANCE.md](PERFORMANCE.md) for performance tuning and optimization tips
+---
 
-## Performance & Optimization
+# ⚡ performance
+- goroutine worker pools  
+- context cancellation everywhere  
+- minimal blocking I/O  
+- optimized ffmpeg invocation  
+- zero global state  
+- thread-safe clip timeline  
+- fast model loading w/ caching
 
-slopCannon now supports multi-threaded processing and configurable performance settings. Key features:
+---
 
-- **Parallel Clip Export**: Export multiple clips simultaneously (default: up to 4 parallel exports)
-- **Parallel Video Analysis**: Scene and motion analysis run in parallel for 2x speedup
-- **Smart Frame Skipping**: Optimized frame sampling for 10-30x faster analysis
-- **Configurable Settings**: Environment variables for fine-tuning performance
+# 🐚 cli design
+the cli is the source of truth — the ui is just a shy little façade.
 
-**Quick Start - Performance Mode:**
-```bash
-export SLOP_MAX_EXPORT_WORKERS=4
-export SLOP_FRAME_SKIP=15
-python3 -m slopcannon.main
+```
+slopcannon analyze input.mp4 --model=mini --overlay=surf --whisper=large
+slopcannon render project.scn --verbose
+slopcannon clip trim --start=10 --end=25
+slopcannon config edit
+slopcannon list plugins
 ```
 
-For detailed configuration options and benchmarks, see [PERFORMANCE.md](PERFORMANCE.md).
+---
 
-## TODO
-### Subtitles
-- Animated text effects
-- AI "Hook" preamble 
-    - AI voiced preamble before clip starts
+# 🎨 overlays & stickers
+- minecraft parkour  
+- csgo surfing  
+- subway surfers  
+- animated stickers  
+- sound effects bound to timestamps  
+- plugin-based renderer for future chaos
 
-### Video Processing
-- Custom output resolution & frame rate for portrait, TikTok, YouTube shorts
-- Overlay flexibility: dynamic selection of overlay video or image
-- Optional audio normalization for consistent volume
-- Parallel processing / multithreading to speed up batch jobs 
-- GPU acceleration option for faster encoding 
-- Manual and AI generated sound effects
-- More AI slop
+---
 
-### UX / Workflow
-- CLI + GUI support for clip selection, styling, and output folder
-- Realtime transcription / preview of subtitles while clip plays
-- Progress reporting: percentage, ETA for long clips
-- Error handling & logging: skip bad files and log failures
+# 🎛 config system
+- global `config.yaml`
+- plugin config sections
+- override w/ `--flag` or `$ENV_VAR`
+- auto-config generator
 
-### Advanced Features
-- Integration with TikTok / YouTube: auto-format clips for different platforms
-- Auto clipping for clips deemed "probable of going viral" by AI or algorithm
-- AI virality scoring 
+---
+
+# 💬 subtitles
+- whisper model (selectable size)
+- `.ass` output
+- style presets (font, color, shadow, outline, pos)
+- offset correction
+- editable timing
+
+---
+
+# 🧪 testing
+- unit tests for each subsystem  
+- integration tests for pipeline  
+- mock ffmpeg + mock model layers  
+- snapshot tests for subtitle rendering
+
+---
+
+
