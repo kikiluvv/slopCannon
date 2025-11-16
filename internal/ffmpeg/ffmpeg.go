@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/rs/zerolog"
 )
@@ -150,4 +151,30 @@ func (e *Executor) streamOutput(r io.Reader, progressHandler func(*Progress), lo
 			progressData = &Progress{}
 		}
 	}
+}
+
+// ExtractFrame extracts a single frame at the specified time
+func (e *Executor) ExtractFrame(ctx context.Context, videoPath string, timestamp time.Duration, outputPath string) error {
+	args := []string{
+		"-ss", fmt.Sprintf("%.3f", timestamp.Seconds()),
+		"-i", videoPath,
+		"-vframes", "1",
+		"-q:v", "2",
+		"-y",
+		outputPath,
+	}
+
+	e.logger.Debug().
+		Str("video", videoPath).
+		Dur("timestamp", timestamp).
+		Str("output", outputPath).
+		Msg("extracting frame")
+
+	cmd := exec.CommandContext(ctx, e.ffmpegPath, args...)
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("frame extraction failed: %w", err)
+	}
+
+	return nil
 }

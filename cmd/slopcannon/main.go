@@ -79,6 +79,7 @@ var analyzeCmd = &cobra.Command{
 		opts := pipeline.AnalyzeOptions{
 			MinClipLen: 5 * time.Second,
 			MaxClips:   10,
+			Model:      cfg.AI.ModelPath,
 		}
 
 		project, err := pipe.Analyze(cmd.Context(), args[0], opts)

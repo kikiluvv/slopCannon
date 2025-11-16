@@ -52,7 +52,8 @@ func (e *Executor) ProbeVideo(ctx context.Context, filePath string) (*VideoInfo,
 
 	// Extract video stream info
 	for _, stream := range probe.Streams {
-		if stream.CodecType == "video" {
+		switch stream.CodecType {
+		case "video":
 			info.Width = stream.Width
 			info.Height = stream.Height
 			info.VideoCodec = stream.CodecName
@@ -61,7 +62,7 @@ func (e *Executor) ProbeVideo(ctx context.Context, filePath string) (*VideoInfo,
 			if stream.RFrameRate != "" {
 				info.FPS = util.ParseFrameRate(stream.RFrameRate)
 			}
-		} else if stream.CodecType == "audio" {
+		case "audio":
 			info.HasAudio = true
 			info.AudioCodec = stream.CodecName
 			if br, err := strconv.ParseInt(stream.BitRate, 10, 64); err == nil {

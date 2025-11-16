@@ -2,6 +2,7 @@ package ai
 
 import (
 	"context"
+	"math"
 
 	"github.com/keagan/slopcannon/internal/clips"
 )
@@ -39,8 +40,60 @@ func NewHeuristicScorer() *HeuristicScorer {
 
 // Score calculates a heuristic score
 func (h *HeuristicScorer) Score(ctx context.Context, clip *clips.Clip) (float64, error) {
-	// TODO: implement heuristic scoring logic
-	return 0.0, nil
+	var totalScore float64
+
+	// Duration scoring (optimal 15-60s for viral clips)
+	durationScore := h.scoreDuration(clip.Duration.Seconds())
+	totalScore += h.weights.Duration * durationScore
+
+	// Shot changes scoring (from metadata)
+	if sceneChanges, ok := clip.Metadata["scene_changes"].(int); ok {
+		shotScore := h.scoreShotChanges(sceneChanges, clip.Duration.Seconds())
+		totalScore += h.weights.ShotChanges * shotScore
+	}
+
+	// Audio peaks scoring (from metadata)
+	if peakVolume, ok := clip.Metadata["peak_volume"].(float64); ok {
+		audioScore := h.scoreAudioPeaks(peakVolume)
+		totalScore += h.weights.AudioPeaks * audioScore
+	}
+
+	// Dialog density scoring (inverse of silence ratio)
+	if silenceRatio, ok := clip.Metadata["silence_ratio"].(float64); ok {
+		dialogScore := 1.0 - math.Min(1.0, silenceRatio)
+		totalScore += h.weights.DialogDensity * dialogScore
+	}
+
+	return math.Max(0.0, math.Min(1.0, totalScore)), nil
+}
+
+// scoreDuration uses a bell curve around optimal length
+func (h *HeuristicScorer) scoreDuration(seconds float64) float64 {
+	// Optimal viral clip: 30 seconds
+	// Acceptable range: 15-60 seconds
+	optimal := 30.0
+	return math.Exp(-math.Pow(seconds-optimal, 2) / 400.0)
+}
+
+// scoreShotChanges normalizes scene changes per second
+func (h *HeuristicScorer) scoreShotChanges(changes int, durationSeconds float64) float64 {
+	if durationSeconds == 0 {
+		return 0
+	}
+	// Optimal: 1 scene change per 3-5 seconds
+	changesPerSecond := float64(changes) / durationSeconds
+	optimal := 0.25 // ~1 change per 4 seconds
+
+	// Bell curve around optimal
+	return math.Exp(-math.Pow(changesPerSecond-optimal, 2) / 0.05)
+}
+
+// scoreAudioPeaks normalizes volume peaks (dB)
+func (h *HeuristicScorer) scoreAudioPeaks(peakDB float64) float64 {
+	// Normalize from typical dB range (-60 to 0)
+	// Higher peaks = more engaging
+	normalized := (peakDB + 60.0) / 60.0
+	return math.Max(0.0, math.Min(1.0, normalized))
 }
 
 // Close is a no-op for heuristic scorer
@@ -90,8 +143,33 @@ func NewCompositeScorer(scorers []Scorer, weights []float64) *CompositeScorer {
 
 // Score calculates a weighted average of all scorers
 func (c *CompositeScorer) Score(ctx context.Context, clip *clips.Clip) (float64, error) {
-	// TODO: implement composite scoring
-	return 0.0, nil
+	if len(c.scorers) == 0 {
+		return 0.0, nil
+	}
+
+	var totalScore float64
+	var totalWeight float64
+
+	for i, scorer := range c.scorers {
+		score, err := scorer.Score(ctx, clip)
+		if err != nil {
+			return 0.0, err
+		}
+
+		weight := 1.0
+		if i < len(c.weights) {
+			weight = c.weights[i]
+		}
+
+		totalScore += score * weight
+		totalWeight += weight
+	}
+
+	if totalWeight == 0 {
+		return 0.0, nil
+	}
+
+	return totalScore / totalWeight, nil
 }
 
 // Close closes all underlying scorers

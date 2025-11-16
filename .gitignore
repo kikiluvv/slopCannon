@@ -4,6 +4,8 @@
 *.dll
 *.so
 *.dylib
+/third_party
+/models
 
 # Test binary, built with `go test -c`
 *.test

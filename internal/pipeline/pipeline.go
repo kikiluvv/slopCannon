@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/keagan/slopcannon/internal/ai"
 	"github.com/keagan/slopcannon/internal/clips"
 	"github.com/keagan/slopcannon/internal/config"
 	"github.com/keagan/slopcannon/internal/ffmpeg"
@@ -13,9 +14,10 @@ import (
 
 // Pipeline orchestrates the entire video processing workflow
 type Pipeline struct {
-	logger zerolog.Logger
-	config *Config
-	ffmpeg *ffmpeg.Executor
+	logger   zerolog.Logger
+	config   *Config
+	ffmpeg   *ffmpeg.Executor
+	detector *ai.ClipDetector
 }
 
 // New creates a new pipeline instance
@@ -34,11 +36,24 @@ func New(logger zerolog.Logger, cfg *Config, appCfg *config.Config) (*Pipeline, 
 		return nil, fmt.Errorf("failed to initialize ffmpeg: %w", err)
 	}
 
+	// Initialize clip detector with default heuristic scoring
+	detectorCfg := ai.DefaultDetectorConfig()
+	detector := ai.NewDefaultClipDetector(logger, ffmpegExec, detectorCfg)
+
 	return &Pipeline{
-		logger: logger.With().Str("component", "pipeline").Logger(),
-		config: cfg,
-		ffmpeg: ffmpegExec,
+		logger:   logger.With().Str("component", "pipeline").Logger(),
+		config:   cfg,
+		ffmpeg:   ffmpegExec,
+		detector: detector,
 	}, nil
+}
+
+// Close releases pipeline resources
+func (p *Pipeline) Close() error {
+	if p.detector != nil {
+		return p.detector.Close()
+	}
+	return nil
 }
 
 // Analyze runs the full analysis pipeline on input video
@@ -66,8 +81,8 @@ func (p *Pipeline) Analyze(ctx context.Context, input string, opts AnalyzeOption
 		Float64("fps", videoInfo.FPS).
 		Msg("video metadata extracted")
 
-	// Stage 2: Clip detection
-	detectedClips, err := p.detectClips(ctx, videoInfo, opts)
+	// Stage 2: AI-powered clip detection
+	detectedClips, err := p.detectClips(ctx, input, opts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to detect clips: %w", err)
 	}
@@ -76,20 +91,18 @@ func (p *Pipeline) Analyze(ctx context.Context, input string, opts AnalyzeOption
 		Int("clips_detected", len(detectedClips)).
 		Msg("clip detection complete")
 
-	// Stage 3: Scoring and ranking (placeholder)
-	rankedClips := p.rankClips(detectedClips, opts)
-
-	// Limit to max clips if specified
-	if opts.MaxClips > 0 && len(rankedClips) > opts.MaxClips {
-		rankedClips = rankedClips[:opts.MaxClips]
+		// Clips are already scored and ranked by detector
+	// Just limit to max clips if specified
+	if opts.MaxClips > 0 && len(detectedClips) > opts.MaxClips {
+		detectedClips = detectedClips[:opts.MaxClips]
 	}
 
-	// Stage 4: Create project
+	// Stage 3: Create project
 	project := &Project{
 		Name:      fmt.Sprintf("project_%d", time.Now().Unix()),
 		InputPath: input,
-		Clips:     rankedClips,
-		Timeline:  &Timeline{Clips: rankedClips},
+		Clips:     detectedClips,
+		Timeline:  &Timeline{Clips: detectedClips},
 		Metadata: map[string]interface{}{
 			"duration":    videoInfo.Duration.Seconds(),
 			"width":       videoInfo.Width,
@@ -112,15 +125,15 @@ func (p *Pipeline) Analyze(ctx context.Context, input string, opts AnalyzeOption
 
 // Render executes the rendering pipeline for a project
 func (p *Pipeline) Render(ctx context.Context, project *Project, opts RenderOptions) (string, error) {
-	p.logger.Info().
-		Str("project", project.Name).
-		Str("output", opts.OutputPath).
-		Msg("starting render pipeline")
-
 	// Validate project
 	if project == nil {
 		return "", fmt.Errorf("project cannot be nil")
 	}
+
+	p.logger.Info().
+		Str("project", project.Name).
+		Str("output", opts.OutputPath).
+		Msg("starting render pipeline")
 	if len(project.Clips) == 0 {
 		return "", fmt.Errorf("project has no clips to render")
 	}
@@ -142,65 +155,61 @@ func (p *Pipeline) Render(ctx context.Context, project *Project, opts RenderOpti
 	return opts.OutputPath, nil
 }
 
-// detectClips performs clip detection based on video analysis
-func (p *Pipeline) detectClips(ctx context.Context, info *ffmpeg.VideoInfo, opts AnalyzeOptions) ([]*clips.Clip, error) {
-	p.logger.Debug().Msg("detecting clips")
+// detectClips performs AI-powered clip detection with composite scoring
+func (p *Pipeline) detectClips(ctx context.Context, videoPath string, opts AnalyzeOptions) ([]*clips.Clip, error) {
+	p.logger.Debug().Msg("detecting clips with AI")
 
-	// TODO: Implement real clip detection:
-	// - Scene change detection
-	// - Silence detection
-	// - Motion analysis
-	// - Face detection (optional)
-
-	// Placeholder: create dummy clips for now
-	detected := make([]*clips.Clip, 0)
-
-	// For now, split video into equal segments
-	segmentDuration := 30 * time.Second
+	// Create detector config
+	detectorCfg := ai.DefaultDetectorConfig()
 	if opts.MinClipLen > 0 {
-		segmentDuration = opts.MinClipLen
+		detectorCfg.MinClipLength = opts.MinClipLen
+	}
+	if opts.MaxClips > 0 {
+		detectorCfg.TopN = opts.MaxClips
 	}
 
-	numSegments := int(info.Duration / segmentDuration)
-	if numSegments == 0 {
-		numSegments = 1
-	}
+	// Build scorer based on model availability
+	scorer := p.buildScorer(opts)
+	defer scorer.Close()
 
-	for i := 0; i < numSegments; i++ {
-		start := time.Duration(i) * segmentDuration
-		end := start + segmentDuration
-		if end > info.Duration {
-			end = info.Duration
-		}
+	// Create detector with custom scorer
+	detector := ai.NewClipDetector(p.logger, p.ffmpeg, scorer, detectorCfg)
+	defer detector.Close()
 
-		clip := &clips.Clip{
-			ID:        fmt.Sprintf("clip_%d", i),
-			Start:     start,
-			End:       end,
-			Duration:  end - start,
-			Score:     0.0,
-			SourceURL: info.FilePath,
-		}
-		detected = append(detected, clip)
-	}
-
-	return detected, nil
+	return detector.Detect(ctx, videoPath)
 }
 
-// rankClips scores and ranks clips by viral potential
-func (p *Pipeline) rankClips(clipList []*clips.Clip, opts AnalyzeOptions) []*clips.Clip {
-	p.logger.Debug().Int("clips", len(clipList)).Msg("ranking clips")
+// buildScorer creates appropriate scorer based on options
+func (p *Pipeline) buildScorer(opts AnalyzeOptions) ai.Scorer {
+	// Always start with heuristic scoring
+	heuristic := ai.NewHeuristicScorer()
 
-	// TODO: Implement real ranking:
-	// - AI model scoring
-	// - Heuristic scoring
-	// - Combined ranking
-
-	// Placeholder: assign random scores for now
-	for i, clip := range clipList {
-		clip.Score = float64(len(clipList)-i) / float64(len(clipList))
+	// If no model specified, use heuristics + aesthetic
+	if opts.Model == "" {
+		p.logger.Info().Msg("using heuristic + aesthetic scoring")
+		aesthetic := ai.NewAestheticScorer(p.logger, p.ffmpeg)
+		return ai.NewCompositeScorer(
+			[]ai.Scorer{heuristic, aesthetic},
+			[]float64{0.6, 0.4}, // 60% heuristic, 40% aesthetic
+		)
 	}
 
-	// Already sorted by creation order, would normally sort by score
-	return clipList
+	// Try to load CLIP model
+	clipScorer, err := ai.NewCLIPScorer(p.logger, p.ffmpeg, opts.Model)
+	if err != nil {
+		p.logger.Warn().Err(err).Msg("failed to load CLIP model, using fallback scoring")
+		aesthetic := ai.NewAestheticScorer(p.logger, p.ffmpeg)
+		return ai.NewCompositeScorer(
+			[]ai.Scorer{heuristic, aesthetic},
+			[]float64{0.6, 0.4},
+		)
+	}
+
+	// Use composite: heuristic + aesthetic + CLIP
+	p.logger.Info().Str("model", opts.Model).Msg("using full composite scoring (heuristic + aesthetic + CLIP)")
+	aesthetic := ai.NewAestheticScorer(p.logger, p.ffmpeg)
+	return ai.NewCompositeScorer(
+		[]ai.Scorer{heuristic, aesthetic, clipScorer},
+		[]float64{0.3, 0.2, 0.5}, // 30% heuristic, 20% aesthetic, 50% CLIP
+	)
 }

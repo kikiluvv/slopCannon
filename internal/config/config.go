@@ -33,7 +33,8 @@ type Config struct {
 }
 
 type AIConfig struct {
-	ModelPath      string  `yaml:"model_path"`
+	ModelPath      string  `yaml:"model_path" env:"AI_MODEL_PATH"`
+	UseModel       bool    `yaml:"use_model" env:"AI_USE_MODEL"`
 	WhisperModel   string  `yaml:"whisper_model"`
 	ScoreThreshold float64 `yaml:"score_threshold"`
 }
@@ -99,7 +100,8 @@ func defaultConfig() *Config {
 		TempDir:     "./temp",
 		Concurrency: 4,
 		AI: AIConfig{
-			ModelPath:      "./models",
+			ModelPath:      "./models/clip-vit-base.onnx",
+			UseModel:       true,
 			WhisperModel:   "base",
 			ScoreThreshold: 0.7,
 		},
