@@ -3,6 +3,8 @@ package pipeline
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/keagan/slopcannon/internal/ai"
@@ -24,28 +26,27 @@ type Pipeline struct {
 func New(logger zerolog.Logger, cfg *Config, appCfg *config.Config) (*Pipeline, error) {
 	if cfg == nil {
 		cfg = &Config{
-			Workers:     4,
-			ChunkSize:   10,
-			EnableCache: true,
+			Workers:   4,
+			ChunkSize: 10,
+			ModelPath: appCfg.AI.ModelPath,
 		}
+	} else if cfg.ModelPath == "" {
+		cfg.ModelPath = appCfg.AI.ModelPath
 	}
 
-	// Initialize ffmpeg executor
 	ffmpegExec, err := ffmpeg.New(logger, appCfg.FFmpeg.Threads)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize ffmpeg: %w", err)
 	}
 
-	// Initialize clip detector with default heuristic scoring
-	detectorCfg := ai.DefaultDetectorConfig()
-	detector := ai.NewDefaultClipDetector(logger, ffmpegExec, detectorCfg)
+	p := &Pipeline{
+		logger: logger.With().Str("component", "pipeline").Logger(),
+		config: cfg,
+		ffmpeg: ffmpegExec,
+		// detector will be created per detectClips call
+	}
 
-	return &Pipeline{
-		logger:   logger.With().Str("component", "pipeline").Logger(),
-		config:   cfg,
-		ffmpeg:   ffmpegExec,
-		detector: detector,
-	}, nil
+	return p, nil
 }
 
 // Close releases pipeline resources
@@ -169,7 +170,7 @@ func (p *Pipeline) detectClips(ctx context.Context, videoPath string, opts Analy
 	}
 
 	// Build scorer based on model availability
-	scorer := p.buildScorer(opts)
+	scorer := p.buildScorer()
 	defer scorer.Close()
 
 	// Create detector with custom scorer
@@ -179,37 +180,64 @@ func (p *Pipeline) detectClips(ctx context.Context, videoPath string, opts Analy
 	return detector.Detect(ctx, videoPath)
 }
 
-// buildScorer creates appropriate scorer based on options
-func (p *Pipeline) buildScorer(opts AnalyzeOptions) ai.Scorer {
-	// Always start with heuristic scoring
+// buildScorer creates appropriate scorer based on pipeline config.
+func (p *Pipeline) buildScorer() ai.Scorer {
+	// Always have heuristic scoring
 	heuristic := ai.NewHeuristicScorer()
+	aesthetic := ai.NewAestheticScorer(p.logger, p.ffmpeg)
 
-	// If no model specified, use heuristics + aesthetic
-	if opts.Model == "" {
-		p.logger.Info().Msg("using heuristic + aesthetic scoring")
-		aesthetic := ai.NewAestheticScorer(p.logger, p.ffmpeg)
-		return ai.NewCompositeScorer(
-			[]ai.Scorer{heuristic, aesthetic},
-			[]float64{0.6, 0.4}, // 60% heuristic, 40% aesthetic
-		)
-	}
-
-	// Try to load CLIP model
-	clipScorer, err := ai.NewCLIPScorer(p.logger, p.ffmpeg, opts.Model)
-	if err != nil {
-		p.logger.Warn().Err(err).Msg("failed to load CLIP model, using fallback scoring")
-		aesthetic := ai.NewAestheticScorer(p.logger, p.ffmpeg)
+	modelDir := p.config.ModelPath
+	if modelDir == "" {
+		// No model configured → heuristic + aesthetic only
+		p.logger.Info().Msg("no model path configured; using heuristic + aesthetic scoring")
 		return ai.NewCompositeScorer(
 			[]ai.Scorer{heuristic, aesthetic},
 			[]float64{0.6, 0.4},
 		)
 	}
 
-	// Use composite: heuristic + aesthetic + CLIP
-	p.logger.Info().Str("model", opts.Model).Msg("using full composite scoring (heuristic + aesthetic + CLIP)")
-	aesthetic := ai.NewAestheticScorer(p.logger, p.ffmpeg)
+	encoderPath := filepath.Join(modelDir, "clip_image_encoder.onnx")
+	headPath := filepath.Join(modelDir, "virality_head.onnx")
+
+	// Sanity check: files exist
+	if _, err := os.Stat(encoderPath); err != nil {
+		p.logger.Warn().Err(err).
+			Str("encoder", encoderPath).
+			Msg("encoder model not found; falling back to heuristic + aesthetic scoring")
+		return ai.NewCompositeScorer(
+			[]ai.Scorer{heuristic, aesthetic},
+			[]float64{0.6, 0.4},
+		)
+	}
+	if _, err := os.Stat(headPath); err != nil {
+		p.logger.Warn().Err(err).
+			Str("head", headPath).
+			Msg("virality head model not found; falling back to heuristic + aesthetic scoring")
+		return ai.NewCompositeScorer(
+			[]ai.Scorer{heuristic, aesthetic},
+			[]float64{0.6, 0.4},
+		)
+	}
+
+	clipScorer, err := ai.NewCLIPScorer(p.logger, p.ffmpeg, encoderPath, headPath)
+	if err != nil {
+		p.logger.Warn().Err(err).
+			Str("encoder", encoderPath).
+			Str("head", headPath).
+			Msg("failed to initialize CLIP scorer; using heuristic + aesthetic scoring")
+		return ai.NewCompositeScorer(
+			[]ai.Scorer{heuristic, aesthetic},
+			[]float64{0.6, 0.4},
+		)
+	}
+
+	p.logger.Info().
+		Str("encoder_model", encoderPath).
+		Str("head_model", headPath).
+		Msg("using heuristic + aesthetic + CLIP scoring")
+
 	return ai.NewCompositeScorer(
 		[]ai.Scorer{heuristic, aesthetic, clipScorer},
-		[]float64{0.3, 0.2, 0.5}, // 30% heuristic, 20% aesthetic, 50% CLIP
+		[]float64{0.3, 0.2, 0.5}, // adjust weights as you like
 	)
 }

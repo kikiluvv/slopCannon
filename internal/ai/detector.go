@@ -118,10 +118,18 @@ func (d *ClipDetector) Detect(ctx context.Context, videoPath string) ([]*clips.C
 		}
 		clip.Score = score
 
-		d.logger.Debug().
+		// Safe logging of optional clip_score metadata
+		var clipScoreVal float64
+		if v, ok := clip.Metadata["clip_score"]; ok {
+			if f, ok2 := v.(float64); ok2 {
+				clipScoreVal = f
+			}
+		}
+
+		d.logger.Info().
 			Str("clip", clip.ID).
 			Float64("score_total", clip.Score).
-			Float64("score_clip", clip.Metadata["clip_score"].(float64)).
+			Float64("score_clip", clipScoreVal).
 			Msg("ranked clip")
 
 		scoredClips = append(scoredClips, clip)

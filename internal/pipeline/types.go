@@ -67,4 +67,10 @@ type Config struct {
 	Workers     int
 	ChunkSize   int
 	EnableCache bool
+	// New: where ONNX models live (directory with clip_image_encoder.onnx, virality_head.onnx)
+	ModelPath string
+
+	// Other per-pipeline knobs you might have
+	MinClipLength time.Duration
+	MaxClipLength time.Duration
 }

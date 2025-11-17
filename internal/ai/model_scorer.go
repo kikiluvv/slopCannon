@@ -9,6 +9,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/keagan/slopcannon/internal/clips"
@@ -21,54 +22,82 @@ import (
 // CLIPScorer uses the sayantan47/clip-vit-b32-onnx model.
 type CLIPScorer struct {
 	logger     zerolog.Logger
-	modelPath  string
 	ffmpeg     *ffmpeg.Executor
 	inputShape ort.Shape
-	session    *ort.DynamicAdvancedSession
+
+	encoderSession *ort.DynamicAdvancedSession
+	headSession    *ort.DynamicAdvancedSession
 }
 
-// NewCLIPScorer creates a new CLIP-based scorer.
-func NewCLIPScorer(logger zerolog.Logger, ffmpegExec *ffmpeg.Executor, modelPath string) (*CLIPScorer, error) {
-	if _, err := os.Stat(modelPath); os.IsNotExist(err) {
-		return nil, fmt.Errorf("model file not found: %s", modelPath)
+var onnxInitOnce sync.Once
+var onnxInitErr error
+
+func init() {
+	// Adjust this path to where brew installed your dylib.
+	// You can find it via: `brew info onnxruntime` or `ls /opt/homebrew/lib | grep onnxruntime`.
+	ort.SetSharedLibraryPath("/usr/local/lib/libonnxruntime.1.22.2.dylib")
+}
+
+// NewCLIPScorer creates a new CLIP-based scorer using image encoder + virality head.
+func NewCLIPScorer(
+	logger zerolog.Logger,
+	ffmpegExec *ffmpeg.Executor,
+	encoderModelPath string,
+	headModelPath string,
+) (*CLIPScorer, error) {
+	if _, err := os.Stat(encoderModelPath); os.IsNotExist(err) {
+		return nil, fmt.Errorf("encoder model file not found: %s", encoderModelPath)
+	}
+	if _, err := os.Stat(headModelPath); os.IsNotExist(err) {
+		return nil, fmt.Errorf("head model file not found: %s", headModelPath)
 	}
 
-	if err := ort.InitializeEnvironment(); err != nil {
-		return nil, fmt.Errorf("failed to initialize ONNX runtime: %w", err)
+	// Initialize ONNX Runtime only once per process
+	onnxInitOnce.Do(func() {
+		onnxInitErr = ort.InitializeEnvironment()
+	})
+	if onnxInitErr != nil {
+		return nil, fmt.Errorf("failed to initialize ONNX runtime: %w", onnxInitErr)
 	}
 
-	// We can omit names here and just rely on order when calling Run().
-	// However, the API requires names if we use Run, so we pass the known ones.
-	inputNames := []string{"input_ids", "attention_mask", "pixel_values"}
-	outputNames := []string{"logits_per_image"} // first output in HF example
-
-	sess, err := ort.NewDynamicAdvancedSession(
-		modelPath,
-		inputNames,
-		outputNames,
+	encoderSession, err := ort.NewDynamicAdvancedSession(
+		encoderModelPath,
+		[]string{"pixel_values"},
+		[]string{"image_embeds"},
 		nil,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create CLIP session: %w", err)
+		return nil, fmt.Errorf("failed to create CLIP image encoder session: %w", err)
+	}
+
+	headSession, err := ort.NewDynamicAdvancedSession(
+		headModelPath,
+		[]string{"image_embeds"},
+		[]string{"score_logits"}, // or "score"
+		nil,
+	)
+	if err != nil {
+		encoderSession.Destroy()
+		return nil, fmt.Errorf("failed to create virality head session: %w", err)
 	}
 
 	logger.Info().
-		Str("model", modelPath).
-		Strs("inputs", inputNames).
-		Strs("outputs", outputNames).
-		Msg("CLIP model loaded")
+		Str("encoder_model", encoderModelPath).
+		Str("head_model", headModelPath).
+		Msg("CLIP encoder + virality head models loaded")
 
 	return &CLIPScorer{
-		logger:     logger.With().Str("scorer", "clip").Logger(),
-		modelPath:  modelPath,
-		ffmpeg:     ffmpegExec,
-		inputShape: ort.NewShape(1, 3, 224, 224),
-		session:    sess,
+		logger:         logger.With().Str("scorer", "clip").Logger(),
+		ffmpeg:         ffmpegExec,
+		inputShape:     ort.NewShape(1, 3, 224, 224),
+		encoderSession: encoderSession,
+		headSession:    headSession,
 	}, nil
 }
 
-// Score runs CLIP on a keyframe and converts logits_per_image to a score.
+// Score runs CLIP image encoder + virality head on a keyframe.
 func (c *CLIPScorer) Score(ctx context.Context, clip *clips.Clip) (float64, error) {
+	// Extract keyframe from middle of clip
 	keyframeTime := clip.Start + (clip.Duration / 2)
 	keyframePath := filepath.Join(os.TempDir(),
 		fmt.Sprintf("clip_keyframe_%s_%d.jpg", clip.ID, time.Now().UnixNano()))
@@ -86,66 +115,53 @@ func (c *CLIPScorer) Score(ctx context.Context, clip *clips.Clip) (float64, erro
 	}
 	defer pixelTensor.Destroy()
 
-	// TEXT -> input_ids, attention_mask
-	// For now, use a dummy "viral video" prompt tokenized as some non-zero IDs.
-	// Later you can replace with real tokenizer IDs exported from Python.
-	const seqLen = 16
-	inputIDs := make([]int64, seqLen)
-	attnMask := make([]int64, seqLen)
-	for i := range inputIDs {
-		inputIDs[i] = 1 // fake token id
-		attnMask[i] = 1 // mark as valid
-	}
-	inputIDsShape := ort.NewShape(1, seqLen)
-	attnMaskShape := ort.NewShape(1, seqLen)
-
-	inputIDsTensor, err := ort.NewTensor(inputIDsShape, inputIDs)
+	// 1) Run image encoder: pixel_values -> image_embeds
+	// Match this to the actual dimension of your ONNX encoder output.
+	const embedDim = 512
+	embedShape := ort.NewShape(1, embedDim)
+	embedTensor, err := ort.NewEmptyTensor[float32](embedShape)
 	if err != nil {
-		return 0.0, fmt.Errorf("failed to create input_ids tensor: %w", err)
+		return 0.0, fmt.Errorf("failed to create image_embeds tensor: %w", err)
 	}
-	defer inputIDsTensor.Destroy()
+	defer embedTensor.Destroy()
 
-	attnMaskTensor, err := ort.NewTensor(attnMaskShape, attnMask)
+	if err := c.encoderSession.Run(
+		[]ort.ArbitraryTensor{pixelTensor},
+		[]ort.ArbitraryTensor{embedTensor},
+	); err != nil {
+		return 0.0, fmt.Errorf("CLIP image encoder inference failed: %w", err)
+	}
+
+	// 2) Run virality head: image_embeds -> score_logits (or score)
+	scoreTensor, err := ort.NewEmptyTensor[float32](ort.NewShape(1, 1))
 	if err != nil {
-		return 0.0, fmt.Errorf("failed to create attention_mask tensor: %w", err)
+		return 0.0, fmt.Errorf("failed to create score tensor: %w", err)
 	}
-	defer attnMaskTensor.Destroy()
+	defer scoreTensor.Destroy()
 
-	// OUTPUT -> logits_per_image
-	// Check in Netron what shape logits_per_image has; many CLIP exports use [1, N].
-	// Start with [1,1]; if Netron shows [1, 2] (for 2 texts), adjust to that.
-	logitsShape := ort.NewShape(1, 1)
-	logitsTensor, err := ort.NewEmptyTensor[float32](logitsShape)
-	if err != nil {
-		return 0.0, fmt.Errorf("failed to create logits_per_image tensor: %w", err)
-	}
-	defer logitsTensor.Destroy()
-
-	// Run inference: order of inputs/outputs must match names we gave the session.
-	inputs := []ort.ArbitraryTensor{inputIDsTensor, attnMaskTensor, pixelTensor}
-	outputs := []ort.ArbitraryTensor{logitsTensor}
-	if err := c.session.Run(inputs, outputs); err != nil {
-		return 0.0, fmt.Errorf("CLIP inference failed: %w", err)
+	if err := c.headSession.Run(
+		[]ort.ArbitraryTensor{embedTensor},
+		[]ort.ArbitraryTensor{scoreTensor},
+	); err != nil {
+		return 0.0, fmt.Errorf("virality head inference failed: %w", err)
 	}
 
-	logits := logitsTensor.GetData()
-	if len(logits) == 0 {
-		return 0.0, fmt.Errorf("unexpected logits_per_image tensor")
+	data := scoreTensor.GetData()
+	if len(data) != 1 {
+		return 0.0, fmt.Errorf("unexpected score tensor size: %d", len(data))
 	}
 
-	// Use first logit, convert to 0-1 via sigmoid (you could also softmax if multiple texts)
-	logit := float64(logits[0])
+	// If your ONNX head outputs logits, apply sigmoid here.
+	logit := float64(data[0])
 	score := 1.0 / (1.0 + math.Exp(-logit))
 
 	c.logger.Debug().
 		Str("clip", clip.ID).
 		Float64("clip_clip_logit", logit).
 		Float64("clip_score", score).
-		Msg("CLIP scoring complete")
+		Msg("CLIP virality scoring complete")
 
-	clip.Metadata["clip_logits_per_image"] = logit
 	clip.Metadata["clip_score"] = score
-
 	return score, nil
 }
 
@@ -193,13 +209,19 @@ func (c *CLIPScorer) preprocessImage(imagePath string) (ort.ArbitraryTensor, err
 	return ort.NewTensor(c.inputShape, data)
 }
 
-// Close releases CLIP session and ONNX env.
+// Close releases ONNX sessions and environment.
 func (c *CLIPScorer) Close() error {
-	c.logger.Info().Msg("closing CLIP model session")
-	if c.session != nil {
-		if err := c.session.Destroy(); err != nil {
+	c.logger.Info().Msg("closing CLIP encoder + head sessions")
+	if c.encoderSession != nil {
+		if err := c.encoderSession.Destroy(); err != nil {
 			return err
 		}
 	}
-	return ort.DestroyEnvironment()
+	if c.headSession != nil {
+		if err := c.headSession.Destroy(); err != nil {
+			return err
+		}
+	}
+	// Do NOT call ort.DestroyEnvironment() here; it is process-wide.
+	return nil
 }

@@ -117,7 +117,7 @@ func TestExtractClip(t *testing.T) {
 		t.Skip("test video not found")
 	}
 
-	logger := zerolog.New(os.Stderr)
+	logger := zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: "15:04:05"})
 	exec, err := New(logger, 2)
 	if err != nil {
 		t.Fatalf("failed to create executor: %v", err)
@@ -125,7 +125,11 @@ func TestExtractClip(t *testing.T) {
 
 	ctx := context.Background()
 	outputPath := getTestDataPath("clip_output.mp4")
-	defer os.Remove(outputPath)
+	defer func() {
+		if _, err := os.Stat(outputPath); err == nil {
+			_ = os.Remove(outputPath)
+		}
+	}()
 
 	opts := ClipOptions{
 		Start:     0,
@@ -139,20 +143,22 @@ func TestExtractClip(t *testing.T) {
 	elapsed := time.Since(start)
 
 	if err != nil {
-		globalResults.Errors = append(globalResults.Errors, fmt.Sprintf("ExtractClip failed: %v", err))
+		globalResults.Errors = append(globalResults.Errors,
+			fmt.Sprintf("ExtractClip failed: %v", err))
 		t.Fatalf("ExtractClip failed: %v", err)
 	}
 
 	// Verify output exists
-	if stat, err := os.Stat(outputPath); os.IsNotExist(err) {
+	stat, err := os.Stat(outputPath)
+	if err != nil {
 		globalResults.ClipCreated = false
-		t.Error("output file was not created")
-	} else {
-		globalResults.ClipCreated = true
-		t.Logf("Clip created: %s (size: %d bytes, took %v)", outputPath, stat.Size(), elapsed)
+		t.Fatalf("output file was not created: %v", err)
 	}
-}
 
+	globalResults.ClipCreated = true
+	t.Logf("Clip created: %s (size: %d bytes, took %v)",
+		outputPath, stat.Size(), elapsed)
+}
 func TestFilterBuilder(t *testing.T) {
 	fb := NewFilterBuilder()
 	filter := fb.Scale(1920, 1080).FPS(30).Build()

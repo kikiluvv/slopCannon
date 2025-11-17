@@ -1,0 +1,45 @@
+# Core settings
+work_dir: "./work"         # where intermediate project files live
+temp_dir: "./temp"         # scratch space for ffmpeg, etc.
+concurrency: 4             # number of concurrent workers
+
+ai:
+  # Directory containing ONNX models (your new encoder + head)
+  # You already use ./models with:
+  #   - clip_image_encoder.onnx
+  #   - virality_head.onnx
+  model_path: "./models"
+
+  # Whether to use AI model-based scoring (if false, only heuristic+aesthetic are used)
+  use_model: true
+
+  # Whisper STT model name (if you use Whisper elsewhere)
+  whisper_model: "base"
+
+  # Minimum score to keep a clip (used wherever you apply this threshold)
+  score_threshold: 0.7
+
+ffmpeg:
+  # ffmpeg binary name or full path
+  binary_path: "ffmpeg"
+
+  # Number of threads to use (0 = ffmpeg decides)
+  threads: 0
+
+  # Preset for encoding when rendering
+  preset: "medium"
+
+subtitles:
+  font_name: "Arial"
+  font_size: 24
+  font_color: "#FFFFFF"
+  outline_width: 2
+
+overlays:
+  # Default overlay name to use (or "none")
+  default_overlay: "none"
+
+  # Named overlays you can reference by key; fill these as you add assets.
+  overlays:
+    # example_lower_third: "./assets/overlays/lower_third.png"
+    # example_watermark: "./assets/overlays/watermark.png"
